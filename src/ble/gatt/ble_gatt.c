@@ -81,14 +81,14 @@ BT_GATT_SERVICE_DEFINE(neuton_gatt,
     
     BT_GATT_CHARACTERISTIC(BT_UUID_NEUTON_CHAR_OUT,
                     BT_GATT_CHRC_NOTIFY,
-                    BT_GATT_PERM_READ,
+                    BT_GATT_PERM_NONE,
                     NULL, NULL, NULL),
 
     BT_GATT_CCC(on_cccd_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 
     BT_GATT_CHARACTERISTIC(BT_UUID_NEUTON_CHAR_IN,
                     BT_GATT_CHRC_WRITE_WITHOUT_RESP,
-                    SAMPLE_BT_PERM_WRITE,
+                    BT_GATT_PERM_WRITE,
                     NULL, on_data_received_, NULL)
 );
 
@@ -108,12 +108,9 @@ static void connected(struct bt_conn* conn, uint8_t err)
 
     printk("Connected %s\n", addr);
 
-    if (bt_conn_set_security(conn, BT_SECURITY_L2))
-    {
-        printk("Failed to set security\n");
-    }
-
     ble_connected_ = true;
+
+    /* Security will be negotiated automatically when accessing encrypted characteristics */
 
     if (!current_conn_)
         current_conn_ = bt_conn_ref(conn);
@@ -135,7 +132,11 @@ static void disconnected(struct bt_conn* conn, uint8_t reason)
     ble_connected_ = false;
     ccc_enabled_ = false;
 
-    current_conn_ = NULL;
+    if (current_conn_)
+    {
+        bt_conn_unref(current_conn_);
+        current_conn_ = NULL;
+    }
 
     if (user_conn_callback_)
         user_conn_callback_(ble_connected_);
@@ -143,31 +144,11 @@ static void disconnected(struct bt_conn* conn, uint8_t reason)
 
 //////////////////////////////////////////////////////////////////////////////
 
-static void security_changed(struct bt_conn* conn, bt_security_t level,
-                             enum bt_security_err err)
-{
-    char addr[BT_ADDR_LE_STR_LEN];
-
-    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-
-    if (!err)
-    {
-        printk("Security changed: %s level %u\n", addr, level);
-    } else
-    {
-        printk("Security failed: %s level %u err %d\n", addr, level,
-               err);
-
-        bt_unpair(BT_ID_DEFAULT, BT_ADDR_LE_ANY);
-    }
-}
-
 //////////////////////////////////////////////////////////////////////////////
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
     .connected = connected,
     .disconnected = disconnected,
-    .security_changed = security_changed,
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -182,11 +163,6 @@ static void bt_ready(int err)
 
     printk("Bluetooth initialized\n");
 
-    if (IS_ENABLED(CONFIG_SETTINGS))
-    {
-        settings_load();
-    }
-
     err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
     if (err)
     {
@@ -198,34 +174,6 @@ static void bt_ready(int err)
 }
 
 //////////////////////////////////////////////////////////////////////////////
-
-static void auth_passkey_display(struct bt_conn* conn, unsigned int passkey)
-{
-    char addr[BT_ADDR_LE_STR_LEN];
-
-    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-
-    printk("Passkey for %s: %06u\n", addr, passkey);
-}
-
-//////////////////////////////////////////////////////////////////////////////
-
-static void auth_cancel(struct bt_conn* conn)
-{
-    char addr[BT_ADDR_LE_STR_LEN];
-
-    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-
-    printk("Pairing cancelled: %s\n", addr);
-}
-
-//////////////////////////////////////////////////////////////////////////////
-
-static struct bt_conn_auth_cb auth_cb_display = {
-    .passkey_display = auth_passkey_display,
-    .passkey_entry = NULL,
-    .cancel = auth_cancel,
-};
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -334,16 +282,11 @@ int ble_gatt_init(ble_connection_cb_t connection_cb, ble_data_received_cb_t data
     user_conn_callback_ = connection_cb;
     user_data_received_callback_ = data_received_cb;
 
-    if (IS_ENABLED(CONFIG_SAMPLE_BT_USE_AUTHENTICATION))
-    {
-        bt_conn_auth_cb_register(&auth_cb_display);
-    }
+    user_conn_callback_ = connection_cb;
+    user_data_received_callback_ = data_received_cb;
 
     return err;
 }
-
-//////////////////////////////////////////////////////////////////////////////
-
 int ble_gatt_send_raw_data(const uint8_t* data, size_t len)
 {
     int res = -1;
@@ -374,11 +317,7 @@ int ble_gatt_start_advertising(void)
         return -1;
     }
 
-    bt_le_adv_stop();
-
-    int res = -1;
-
-    res = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+    int res = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 
     return res;
 }

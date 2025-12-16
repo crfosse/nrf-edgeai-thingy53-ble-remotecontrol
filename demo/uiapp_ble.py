@@ -28,13 +28,17 @@ async def discover_services(device_name, characteristic_uuid):
 
     devices = await scanner.discover()
     for device in devices:
-        if device.name == device_name:
-            print("{0} device found".format(device_name))
-            async with BleakClient(device) as client:
-                await client.is_connected()
+        # Accept exact match or if scanned name is part of requested name
+        if device.name and (device.name == device_name or device.name in device_name):
+            print("{0} device found (scanned as: {1})".format(device_name, device.name))
+            
+            client = BleakClient(device, disconnected_callback=lambda c: print("Disconnected!"))
+            
+            try:
+                await client.connect()
                 print("Device Connected!")
 
-                services = await client.get_services()
+                services = client.services
 
                 for service in services:
                     for char in service.characteristics:
@@ -43,6 +47,13 @@ async def discover_services(device_name, characteristic_uuid):
                             print("Ready to work")
                             await start_listening(client, char)
                             return
+            except Exception as e:
+                print(f"Connection error: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                if client.is_connected:
+                    await client.disconnect()
 
 
 async def start_listening(client, characteristic):
@@ -240,7 +251,7 @@ ax.axis("off")
 plt.box(False)
 plt.axis("off")
 
-ani = animation.FuncAnimation(fig, animate, interval=50)
+ani = animation.FuncAnimation(fig, animate, interval=50, cache_frame_data=False)
 
 signal.signal(signal.SIGINT, signal_handler)
 
