@@ -26,6 +26,8 @@ class Gestures(Enum):
 async def discover_services(device_name, characteristic_uuid):
     scanner = BleakScanner()
 
+    print("Start scanning for devices...")
+
     devices = await scanner.discover()
     for device in devices:
         # Accept exact match or if scanned name is part of requested name

@@ -151,7 +151,7 @@ SWIPE LEFT, probability 99 %
 
 The UI demo app will duplicate this with a graphical representation of recongized gestures:
 
-![gui-example-1](resources/gui_example.gif)
+![gui-example-1](resources/gui_example.png)
 
 
 Have fun and use this model for your future gesture control projects!
