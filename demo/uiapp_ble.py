@@ -136,6 +136,8 @@ class BLEManager:
             process_device_output_message(
                 f"{class_name}, {prob_percentage}%"
             )
+            # Trigger matplotlib update
+            fig.canvas.draw_idle()
 
         await self.client.start_notify(
             characteristic.uuid, notification_handler
@@ -250,7 +252,7 @@ def animate(_):
 
     y = 508 + 22 * 3
     for line, ts in reversed(model_inferences_str_buffer):
-        ax.text(60, y, f"({ts}) {line}", color="yellow", size=12)
+        ax.text(60, y, f"({ts}) {line}", color="yellow", size=9)
         y -= 22
 
 
@@ -283,7 +285,7 @@ activity_double_thumb_img = resize_icon_image(Image.open(os.path.join(material_p
 activity_rotation_right_img = resize_icon_image(Image.open(os.path.join(material_path, "RotationRight.png")))
 activity_rotation_left_img = resize_icon_image(Image.open(os.path.join(material_path, "RotationLeft.png")))
 
-fig, ax = plt.subplots(1, figsize=(15, 10))
+fig, ax = plt.subplots(1, figsize=(12, 6))
 ani = animation.FuncAnimation(fig, animate, interval=50, cache_frame_data=False)
 
 Thread(target=thread_ble, daemon=True).start()
