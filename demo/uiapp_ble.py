@@ -1,7 +1,7 @@
 import sys
 import os
 import numpy
-from enum import Enum
+from enum import Enum, auto
 import signal
 import asyncio
 from bleak import BleakScanner, BleakClient
@@ -11,6 +11,10 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from matplotlib import animation
 
+
+# =========================
+# Gesture definitions
+# =========================
 
 class Gestures(Enum):
     IDLE = 1
@@ -23,247 +27,265 @@ class Gestures(Enum):
     ROTATION_LEFT = 8
 
 
-async def discover_services(device_name, characteristic_uuid):
-    scanner = BleakScanner()
-
-    print("Start scanning for devices...")
-
-    devices = await scanner.discover()
-    for device in devices:
-        # Accept exact match or if scanned name is part of requested name
-        if device.name and (device.name == device_name or device.name in device_name):
-            print("{0} device found (scanned as: {1})".format(device_name, device.name))
-            
-            client = BleakClient(device, disconnected_callback=lambda c: print("Disconnected!"))
-            
-            try:
-                await client.connect()
-                print("Device Connected!")
-
-                services = client.services
-
-                for service in services:
-                    for char in service.characteristics:
-                        if char.uuid == characteristic_uuid:
-                            print("Neuton characteristic found")
-                            print("Ready to work")
-                            await start_listening(client, char)
-                            return
-            except Exception as e:
-                print(f"Connection error: {e}")
-                import traceback
-                traceback.print_exc()
-            finally:
-                if client.is_connected:
-                    await client.disconnect()
+gestures_string_names = {
+    Gestures.UNKNOWN: "UNKNOWN GESTURE",
+    Gestures.SWIPE_RIGHT: "SWIPE RIGHT",
+    Gestures.SWIPE_LEFT: "SWIPE LEFT",
+    Gestures.DOUBLE_SHAKE: "DOUBLE SHAKE",
+    Gestures.DOUBLE_THUMB: "DOUBLE THUMB",
+    Gestures.ROTATION_RIGHT: "ROTATION RIGHT",
+    Gestures.ROTATION_LEFT: "ROTATION LEFT",
+    Gestures.IDLE: "NO MOVEMENTS",
+}
 
 
-async def start_listening(client, characteristic):
-    def notification_handler(sender: int, data: bytearray):
-        # This function will be called when notifications/indications are received
-        # The received data will be available in the 'data' parameter.
+# =========================
+# BLE STATE MACHINE
+# =========================
 
-        ble_str = data.decode("utf-8").strip()
-        print(ble_str)
+class BLEState(Enum):
+    SCANNING = auto()
+    CONNECTING = auto()
+    LISTENING = auto()
 
-        predicted_class_str = str(ble_str.split(",")[0])
-        probability_str = ble_str.split(",")[1].strip()
 
-        class_label_raw = (
-            int(predicted_class_str) + 1
-        )  # Lable starts from 1 but on device starts from 0
-        prob_percentage = int(probability_str)
+class BLEManager:
+    def __init__(self, device_name, characteristic_uuid):
+        self.device_name = device_name
+        self.char_uuid = characteristic_uuid
 
-        class_label = Gestures(class_label_raw)
-        class_name = gestures_string_names[class_label]
+        self.state = BLEState.SCANNING
+        self.device = None
+        self.client = None
 
-        state.update_image = (
-            False
-            if state.current_activity == class_label and class_label == Gestures.UNKNOWN
-            else True
+        self.disconnect_event = asyncio.Event()
+
+    # Must be sync according to bleak docs
+    def on_disconnect(self, client):
+        print("BLE → Device disconnected, restarting scan")
+        self.disconnect_event.set()
+
+    async def scan(self):
+        print("BLE → Scanning...")
+        devices = await BleakScanner.discover()
+
+        for device in devices:
+            if device.name and (
+                device.name == self.device_name
+                or device.name in self.device_name
+            ):
+                print(f"BLE → Found {device.name}")
+                self.device = device
+                self.state = BLEState.CONNECTING
+                return
+
+        await asyncio.sleep(2)
+
+    async def connect(self):
+        print(f"BLE → Connecting to {self.device.name}")
+        self.disconnect_event.clear()
+
+        self.client = BleakClient(
+            self.device,
+            disconnected_callback=self.on_disconnect
         )
-        state.current_activity = class_label
 
-        process_device_output_message(f"{class_name}, {prob_percentage}%")
-        print("{0}, probability {1} %".format(class_name, prob_percentage))
+        try:
+            await self.client.connect()
+            print("BLE → Connected")
+            await asyncio.sleep(1) 
+            self.state = BLEState.LISTENING
+        except Exception as e:
+            print(f"BLE → Connection failed: {e}")
+            self.state = BLEState.SCANNING
 
-    # Subscribe to notifications/indications for the characteristic
-    await client.start_notify(characteristic.uuid, notification_handler)
-    # Keep the program running to continue listening for data
-    while True:
-        await asyncio.sleep(5)
+    async def listen(self):
+        characteristic = None
+
+        for service in self.client.services:
+            for char in service.characteristics:
+                if char.uuid == self.char_uuid:
+                    characteristic = char
+                    break
+
+        if not characteristic:
+            print("BLE → Characteristic not found")
+            self.state = BLEState.SCANNING
+            return
+
+        def notification_handler(sender, data):
+            ble_str = data.decode("utf-8").strip()
+            print(ble_str)
+
+            predicted_class_str = ble_str.split(",")[0]
+            probability_str = ble_str.split(",")[1].strip()
+
+            class_label_raw = int(predicted_class_str) + 1
+            prob_percentage = int(probability_str)
+
+            class_label = Gestures(class_label_raw)
+            class_name = gestures_string_names[class_label]
+
+            state.update_image = not (
+                state.current_activity == class_label
+                and class_label == Gestures.UNKNOWN
+            )
+            state.current_activity = class_label
+
+            print("{0}, probability {1} %".format(class_name, prob_percentage))
+            process_device_output_message(
+                f"{class_name}, {prob_percentage}%"
+            )
+
+        await self.client.start_notify(
+            characteristic.uuid, notification_handler
+        )
+
+        print("BLE → Listening")
+
+        # Block until disconnect
+        await self.disconnect_event.wait()
+        await self.client.disconnect()
+
+        print("BLE → Stopping notifications")
+        try:
+            await self.client.stop_notify(characteristic.uuid)
+        except Exception:
+            pass
+
+        self.state = BLEState.SCANNING
+
+    async def run(self):
+        while True:
+            if self.state == BLEState.SCANNING:
+                await self.scan()
+            elif self.state == BLEState.CONNECTING:
+                await self.connect()
+            elif self.state == BLEState.LISTENING:
+                await self.listen()
 
 
 def thread_ble():
-    asyncio.run(
-        discover_services(
-            "Neuton NRF RemoteControl", "516a51c4-b1e1-47fa-8327-8acaeb3399eb"
-        )
+    manager = BLEManager(
+        "Neuton NRF RemoteControl",
+        "516a51c4-b1e1-47fa-8327-8acaeb3399eb"
     )
+    asyncio.run(manager.run())
 
 
-def signal_handler(sig, frame):
-    sys.exit(0)
-
+# =========================
+# UI STATE (UNCHANGED)
+# =========================
 
 class State:
-    def __init__(self, current_activity=Gestures.UNKNOWN, update_image=True) -> None:
+    def __init__(self, current_activity=Gestures.UNKNOWN, update_image=True):
         self.current_activity = current_activity
         self.update_image = update_image
 
 
+state = State()
+model_inferences_str_buffer = []
+
+
+# =========================
+# IMAGE / UI HELPERS
+# =========================
+
 def resize_icon_image(image, resize_percent=25):
-    original_width, original_height = image.size
-    new_width = int(original_width * resize_percent / 100)
-    new_height = int(original_height * resize_percent / 100)
-    return image.resize((new_width, new_height))
+    w, h = image.size
+    return image.resize(
+        (int(w * resize_percent / 100), int(h * resize_percent / 100))
+    )
 
 
 def prepare_image(current_activity=Gestures.UNKNOWN, update_image=False):
     result_image = main_img.copy()
-    if update_image == True:
-        images = dict()
-        images[Gestures.UNKNOWN] = activity_unknown_img
-        images[Gestures.SWIPE_RIGHT] = activity_swipe_right_img
-        images[Gestures.SWIPE_LEFT] = activity_swipe_left_img
-        images[Gestures.DOUBLE_SHAKE] = activity_double_shake_img
-        images[Gestures.DOUBLE_THUMB] = activity_double_thumb_img
-        images[Gestures.ROTATION_RIGHT] = activity_rotation_right_img
-        images[Gestures.ROTATION_LEFT] = activity_rotation_left_img
-        images[Gestures.IDLE] = activity_idle_img
+    if update_image:
+        images = {
+            Gestures.UNKNOWN: activity_unknown_img,
+            Gestures.SWIPE_RIGHT: activity_swipe_right_img,
+            Gestures.SWIPE_LEFT: activity_swipe_left_img,
+            Gestures.DOUBLE_SHAKE: activity_double_shake_img,
+            Gestures.DOUBLE_THUMB: activity_double_thumb_img,
+            Gestures.ROTATION_RIGHT: activity_rotation_right_img,
+            Gestures.ROTATION_LEFT: activity_rotation_left_img,
+            Gestures.IDLE: activity_idle_img,
+        }
 
-        current_activity_image = images[current_activity]
+        img = images[current_activity]
+        x = 320 - img.size[0] // 2
+        y = 250 - img.size[1] // 2
 
-        white_field_center_x = 320
-        white_field_center_y = 250
-
-        icon_width, icon_height = current_activity_image.size
-        icon_x_position = white_field_center_x - (icon_width // 2)
-        icon_y_position = white_field_center_y - (icon_height // 2)
-
-        if current_activity_image.mode == "RGBA":
-            result_image.paste(
-                current_activity_image,
-                (icon_x_position, icon_y_position),
-                current_activity_image,
-            )
+        if img.mode == "RGBA":
+            result_image.paste(img, (x, y), img)
         else:
-            result_image.paste(
-                current_activity_image, (icon_x_position, icon_y_position)
-            )
+            result_image.paste(img, (x, y))
 
     return result_image
 
 
-def get_image(current_activity=Gestures.UNKNOWN, update_image=False):
-    prepared_image = prepare_image(current_activity, update_image)
-    return prepared_image
+def get_image(activity, update):
+    return prepare_image(activity, update)
 
 
-def show_realtime_inference_labels():
-    y_offset = 22 * 3
-    # Display the last 3 lines and timestamps as text labels in reverse order
-    for i, (line, timestamp) in enumerate(reversed(model_inferences_str_buffer)):
-        ax.text(60, 508 + y_offset, f"({timestamp}) {line}", color="yellow", size=12)
-        y_offset -= 22
-
-
-def update_realtime_inference_labels(new_inference_string):
-    # Format the timestamp as minutes:seconds:milliseconds
+def update_realtime_inference_labels(text):
     timestamp = datetime.now().strftime("%M:%S:%f")[:-3]
-
     if len(model_inferences_str_buffer) == 3:
-        # If the list has 3 lines, remove the oldest line
         model_inferences_str_buffer.pop(0)
-
-        # Add the new line to the list
-    model_inferences_str_buffer.append((new_inference_string, timestamp))
-
-
-def animate(i):
-    image_to_show = get_image(state.current_activity, state.update_image)
-
-    open_cv_image = numpy.array(image_to_show)
-    ax.clear()
-    ax.imshow(open_cv_image)
-
-    if state.current_activity != None:
-        label_str = gestures_string_names[state.current_activity]
-        ha = "center"
-        color = "white"
-        ax.text(320, 420, label_str, ha=ha, color=color, size=16)
-
-    show_realtime_inference_labels()
-    plt.axis("off")
+    model_inferences_str_buffer.append((text, timestamp))
 
 
 def process_device_output_message(read_str):
     update_realtime_inference_labels(read_str)
 
 
-# ========================================================================================
+def animate(_):
+    img = get_image(state.current_activity, state.update_image)
+    ax.clear()
+    ax.imshow(numpy.array(img))
+    ax.axis("off")
+
+    label = gestures_string_names[state.current_activity]
+    ax.text(320, 420, label, ha="center", color="white", size=16)
+
+    y = 508 + 22 * 3
+    for line, ts in reversed(model_inferences_str_buffer):
+        ax.text(60, y, f"({ts}) {line}", color="yellow", size=12)
+        y -= 22
 
 
-dir_path = os.path.dirname(os.path.abspath(__file__))
-material_path = os.path.join(dir_path, "assets")
+# =========================
+# SHUTDOWN
+# =========================
 
-gestures_string_names = dict()
-gestures_string_names[Gestures.UNKNOWN] = "UNKNOWN GESTURE"
-gestures_string_names[Gestures.SWIPE_RIGHT] = "SWIPE RIGHT"
-gestures_string_names[Gestures.SWIPE_LEFT] = "SWIPE LEFT"
-gestures_string_names[Gestures.DOUBLE_SHAKE] = "DOUBLE SHAKE"
-gestures_string_names[Gestures.DOUBLE_THUMB] = "DOUBLE THUMB"
-gestures_string_names[Gestures.ROTATION_RIGHT] = "ROTATION RIGHT"
-gestures_string_names[Gestures.ROTATION_LEFT] = "ROTATION LEFT"
-gestures_string_names[Gestures.IDLE] = "NO MOVEMENTS"
-
-main_img = Image.open(os.path.join(material_path, "Background.png"))
-
-activity_idle_img = resize_icon_image(
-    Image.open(os.path.join(material_path, "Idle.png"))
-)
-activity_unknown_img = resize_icon_image(
-    Image.open(os.path.join(material_path, "Unknown.png"))
-)
-activity_swipe_right_img = resize_icon_image(
-    Image.open(os.path.join(material_path, "SwipeRight.png"))
-)
-activity_swipe_left_img = resize_icon_image(
-    Image.open(os.path.join(material_path, "SwipeLeft.png"))
-)
-activity_double_shake_img = resize_icon_image(
-    Image.open(os.path.join(material_path, "DoubleShake.png"))
-)  #
-activity_double_thumb_img = resize_icon_image(
-    Image.open(os.path.join(material_path, "DoubleThumb.png"))
-)  #
-activity_rotation_right_img = resize_icon_image(
-    Image.open(os.path.join(material_path, "RotationRight.png"))
-)  #
-activity_rotation_left_img = resize_icon_image(
-    Image.open(os.path.join(material_path, "RotationLeft.png"))
-)
-
-state = State()
-
-model_inferences_str_buffer = []
-
-fig, ax = plt.subplots(1, figsize=(15, 10))
-ax.axis("off")
-plt.box(False)
-plt.axis("off")
-
-ani = animation.FuncAnimation(fig, animate, interval=50, cache_frame_data=False)
+def signal_handler(sig, frame):
+    plt.close('all')  # Close all matplotlib windows
+    os._exit(0) 
 
 signal.signal(signal.SIGINT, signal_handler)
 
 
-# Comment out for testing - Bluetooth functionality
-x = Thread(target=thread_ble)
-x.start()
+# =========================
+# MAIN
+# =========================
 
-# Testing functionality - File reading
-# x = Thread(target=thread_file)
-# x.start()
+dir_path = os.path.dirname(os.path.abspath(__file__))
+material_path = os.path.join(dir_path, "assets")
+
+main_img = Image.open(os.path.join(material_path, "Background.png"))
+
+activity_idle_img = resize_icon_image(Image.open(os.path.join(material_path, "Idle.png")))
+activity_unknown_img = resize_icon_image(Image.open(os.path.join(material_path, "Unknown.png")))
+activity_swipe_right_img = resize_icon_image(Image.open(os.path.join(material_path, "SwipeRight.png")))
+activity_swipe_left_img = resize_icon_image(Image.open(os.path.join(material_path, "SwipeLeft.png")))
+activity_double_shake_img = resize_icon_image(Image.open(os.path.join(material_path, "DoubleShake.png")))
+activity_double_thumb_img = resize_icon_image(Image.open(os.path.join(material_path, "DoubleThumb.png")))
+activity_rotation_right_img = resize_icon_image(Image.open(os.path.join(material_path, "RotationRight.png")))
+activity_rotation_left_img = resize_icon_image(Image.open(os.path.join(material_path, "RotationLeft.png")))
+
+fig, ax = plt.subplots(1, figsize=(15, 10))
+ani = animation.FuncAnimation(fig, animate, interval=50, cache_frame_data=False)
+
+Thread(target=thread_ble, daemon=True).start()
 
 plt.show()
