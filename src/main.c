@@ -93,7 +93,6 @@ static void service_thread_fn_(void *p1, void *p2, void *p3);
 //////////////////////////////////////////////////////////////////////////////
 
 static bool ble_connected_ = false;
-static bool ble_adv_started_ = false;
 static struct k_sem imu_data_ready_sem_;
 static nrf_edgeai_t* p_model_ = NULL;
 
@@ -216,8 +215,6 @@ static void board_support_init_(void)
     {
         printk("Failed to initialize BLE HID service\n");
     }
-
-    ble_adv_started_ = true;
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -235,7 +232,6 @@ static void button_click_handler_(bool pressed)
 static void ble_connection_cb_(bool connected)
 {
     ble_connected_ = connected;
-    ble_adv_started_ = false;
     bsp_led_off();
 }
 
@@ -322,20 +318,6 @@ static void service_thread_fn_(void *p1, void *p2, void *p3)
             brightness -= LED_BLINK_CHANGE_BRIGHTNESS_STEP;
             if (brightness <= 0)
                 rising = true;
-        }
-
-        if (!ble_connected_ && !ble_adv_started_)
-        {
-            int err = ble_gatt_start_advertising();
-
-            if (err)
-            {
-                printk("Advertising failed to start (err %d)\n", err);
-            }
-            else
-            {
-                ble_adv_started_ = true;
-            }
         }
 
         k_msleep(SERVICE_THREAD_PERIOD_MS);
