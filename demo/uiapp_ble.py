@@ -49,6 +49,15 @@ class BLEState(Enum):
     LISTENING = auto()
 
 
+BLEState_to_str = {
+    BLEState.SCANNING: "SCANNING",
+    BLEState.CONNECTING: "CONNECTING",
+    BLEState.LISTENING: "LISTENING",
+}
+
+global ble_state_str
+ble_state_str = ""
+
 class BLEManager:
     def __init__(self, device_name, characteristic_uuid):
         self.device_name = device_name
@@ -159,6 +168,8 @@ class BLEManager:
 
     async def run(self):
         while True:
+            global ble_state_str
+            ble_state_str = BLEState_to_str[self.state]
             if self.state == BLEState.SCANNING:
                 await self.scan()
             elif self.state == BLEState.CONNECTING:
@@ -252,8 +263,12 @@ def animate(_):
 
     y = 508 + 22 * 3
     for line, ts in reversed(model_inferences_str_buffer):
-        ax.text(60, y, f"({ts}) {line}", color="yellow", size=9)
+        ax.text(30, y, f"({ts}) {line}", color="yellow", size=9)
         y -= 22
+
+    global ble_state_str
+    color = "#CEDD50" if ble_state_str == "LISTENING" else "white"
+    ax.text(30, 120, f"BLE: {ble_state_str}", color=color, weight="bold", size=8)
 
 
 # =========================
