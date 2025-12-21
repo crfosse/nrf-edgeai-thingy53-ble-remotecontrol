@@ -1,7 +1,7 @@
 # editors
 *.swp
 *~
-
+.venv/
 # build
 /build*/
 /.vscode/
