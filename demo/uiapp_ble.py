@@ -57,6 +57,8 @@ BLEState_to_str = {
 
 global ble_state_str
 ble_state_str = ""
+# Global variable to hold the BLEManager instance
+ble_manager = None
 
 class BLEManager:
     def __init__(self, device_name, characteristic_uuid):
@@ -179,11 +181,12 @@ class BLEManager:
 
 
 def thread_ble():
-    manager = BLEManager(
+    global ble_manager
+    ble_manager = BLEManager(
         "Neuton NRF RemoteControl",
         "516a51c4-b1e1-47fa-8327-8acaeb3399eb"
     )
-    asyncio.run(manager.run())
+    asyncio.run(ble_manager.run())
 
 
 # =========================
@@ -275,9 +278,16 @@ def animate(_):
 # SHUTDOWN
 # =========================
 
+def on_close(event):
+    print("Window closed, exiting...")
+    signal_handler(None, None)
+
 def signal_handler(sig, frame):
+    print("Handling exiting signal...")
+    if ble_manager and ble_manager.client and ble_manager.client.is_connected:
+        asyncio.run(ble_manager.client.disconnect())  # Properly disconnect the client
     plt.close('all')  # Close all matplotlib windows
-    os._exit(0) 
+    os._exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -302,6 +312,9 @@ activity_rotation_left_img = resize_icon_image(Image.open(os.path.join(material_
 
 fig, ax = plt.subplots(1, figsize=(12, 6))
 ani = animation.FuncAnimation(fig, animate, interval=50, cache_frame_data=False)
+
+# Connect the close event to the signal handler
+fig.canvas.mpl_connect('close_event', on_close)
 
 Thread(target=thread_ble, daemon=True).start()
 
