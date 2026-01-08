@@ -4,7 +4,7 @@
 set -euo pipefail
 trap 'echo "Error on line $LINENO"; exit 1' ERR
 
-REPO_URL="git@github.com:Neuton-tinyML/neuton-nordic-thingy53-ble-remotecontrol.git"
+REPO_URL="https://github.com/Neuton-tinyML/neuton-nordic-thingy53-ble-remotecontrol.git"
 TARGET_DIR="neuton-nordic-thingy53-ble-remotecontrol"
 REPO_BRANCH="feature/custom-ble-gatt"
 
