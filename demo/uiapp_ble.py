@@ -183,7 +183,7 @@ class BLEManager:
 def thread_ble():
     global ble_manager
     ble_manager = BLEManager(
-        "Neuton NRF RemoteControl",
+        "Neuton NRF RemoteControl DEMO",
         "516a51c4-b1e1-47fa-8327-8acaeb3399eb"
     )
     asyncio.run(ble_manager.run())
