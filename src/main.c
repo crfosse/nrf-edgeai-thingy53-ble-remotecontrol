@@ -339,7 +339,6 @@ static void model_prediction_handler_(const class_label_t class_label,
             last_prediction_time_ms_ = current_time_ms;
 
             printk("Predicted class: %s, with probability %d %%\r\n", class_name, (int)(100 * probability));
-
             send_bt_keyboard_key_(class_label);
         }
     }
@@ -365,8 +364,8 @@ static void send_bt_keyboard_key_(const class_label_t class_label)
         {
             [CLASS_LABEL_IDLE] = BLE_HID_KEYS_count, // No key
             [CLASS_LABEL_UNKNOWN] = BLE_HID_KEYS_count, // No key
-            [CLASS_LABEL_SWIPE_RIGHT] = BLE_HID_KEY_MEDIA_NEXT_TRACK, // Next track
-            [CLASS_LABEL_SWIPE_LEFT] = BLE_HID_KEY_MEDIA_PREV_TRACK, // Previous track
+            [CLASS_LABEL_SWIPE_RIGHT] = BLE_HID_KEY_MEDIA_PREV_TRACK, // Next track
+            [CLASS_LABEL_SWIPE_LEFT] = BLE_HID_KEY_MEDIA_NEXT_TRACK, // Previous track
             [CLASS_LABEL_DOUBLE_SHAKE] = BLE_HID_KEY_MEDIA_PLAY_PAUSE, // Play-pause stream
             [CLASS_LABEL_DOUBLE_THUMB] = BLE_HID_KEY_MEDIA_MUTE, // Mute stream
             [CLASS_LABEL_ROTATION_RIGHT] = BLE_HID_KEY_MEDIA_VOLUME_UP, // Volume up
